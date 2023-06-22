@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [versionize](https://github.com/versionize/versionize) for commit guidelines.
 
+<a name="4.3.0"></a>
+## [4.3.0](https://www.github.com/whichwit/pg/releases/tag/v4.3.0) (2023-6-22)
+
+### Features
+
+* typo Thu Jun 22 16:42:15 EDT 2023 ([25ab8c9](https://www.github.com/whichwit/pg/commit/25ab8c91f13380519d255fad0ed80b01228ab0db))
+
+### Bug Fixes
+
+* typo ([e3cad52](https://www.github.com/whichwit/pg/commit/e3cad520b5f4fb7094e4b9d494d101a65e178cca))
+
+### Other
+
+* typo 2 ([a3b7a88](https://www.github.com/whichwit/pg/commit/a3b7a88716364401d82373064ffc4aa3e6bb7413))
+
 <a name="4.2.0"></a>
 ## [4.2.0](https://www.github.com/whichwit/pg/releases/tag/v4.2.0) (2023-6-22)
 
