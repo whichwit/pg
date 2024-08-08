@@ -7,10 +7,7 @@ on:
 jobs:
   commitlint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [dev, prod]
-    environment: ${{ matrix.target }}
+    environment: ${{ github.ref_name }}
     steps:
-      - run: echo "${{ matrix.target }}"
+      - run: echo "${{ github.ref_name }}"
       - run: echo "${{ secrets.ENV_SEC }}"
