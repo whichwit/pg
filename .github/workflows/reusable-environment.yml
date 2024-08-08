@@ -5,7 +5,7 @@ on:
     branches: [ "main", "dev" ]
 
 jobs:
-  commitlint:
+  deploy:
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name }}
     steps:
