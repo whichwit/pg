@@ -12,5 +12,6 @@ jobs:
       - run: unzip convco-deb.zip
       - run: mv convco_*.deb convco.deb
       - run: sudo dpkg -i convco.deb
-      - run: convco version --help
+      - run: ls
+      - run: convco version
 
