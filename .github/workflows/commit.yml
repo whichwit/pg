@@ -1,0 +1,21 @@
+name: Tester
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+
+jobs:
+  tester:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+      - run: git tag -l
+      - run: curl -OL https://github.com/convco/convco/releases/latest/download/convco-deb.zip
+      - run: unzip convco-deb.zip
+      - run: mv convco_*.deb convco.deb
+      - run: sudo dpkg -i convco.deb
+      - run: ls
+      - run: convco version
+
