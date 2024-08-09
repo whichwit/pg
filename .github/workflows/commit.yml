@@ -1,15 +1,15 @@
-name: Test reusable environment
+name: Tester
 
 on:
   push:
     branches: [ "main", "dev" ]
 
 jobs:
-  deploy:
+  tester:
     runs-on: ubuntu-latest
     steps:
       - run: curl -OL https://github.com/convco/convco/releases/latest/download/convco-deb.zip
       - run: unzip convco-deb.zip
-      - run: dpkg -i convco.deb
+      - run: sudo dpkg -i convco.deb
       - run: convco -v
 
