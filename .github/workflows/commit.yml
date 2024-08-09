@@ -10,6 +10,7 @@ jobs:
     steps:
       - run: curl -OL https://github.com/convco/convco/releases/latest/download/convco-deb.zip
       - run: unzip convco-deb.zip
+      - run: mv convco_*.deb convco.deb
       - run: sudo dpkg -i convco.deb
       - run: convco -v
 
