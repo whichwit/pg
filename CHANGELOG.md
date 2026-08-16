@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [versionize](https://github.com/versionize/versionize) for commit guidelines.
 
+<a name="4.3.1"></a>
+## [4.3.1](https://www.github.com/whichwit/pg/releases/tag/v4.3.1) (2024-08-06)
+
+### Other
+
+* test ([b7c3551](https://www.github.com/whichwit/pg/commit/b7c3551b1eb8886d60ea798bc9e5a76fb373137b))
+* test signing ([0591ba1](https://www.github.com/whichwit/pg/commit/0591ba1782e9bfb5bf33d6d49c090b37951bd20b))
+
 <a name="4.3.0"></a>
 ## [4.3.0](https://www.github.com/whichwit/pg/releases/tag/v4.3.0) (2023-6-22)
 
