@@ -1,0 +1,21 @@
+name: Test create release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Generate version
+        id: generate-version
+        uses: ./actions/generate-version
+      - name: Create release
+        uses: ./actions/create-release
+        with:
+          tag: ${{ steps.generate-version.outputs.version }}
