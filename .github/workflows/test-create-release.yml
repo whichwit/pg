@@ -18,4 +18,5 @@ jobs:
       - name: Create release
         uses: ./actions/create-release
         with:
+          mode: scoped
           tag: ${{ steps.generate-version.outputs.version }}
