@@ -1,0 +1,136 @@
+name: Create release
+description: 'Tags the current commit and creates a GitHub release using the r<version> convention'
+
+inputs:
+  tag:
+    description: The release version (without prefix); the release tag is r<version>
+    required: true
+  mode:
+    description: >
+      Release notes mode: conventional (default; group by commit type),
+      scoped (same, including scope in each line), or auto (use release-notes
+      file when provided, otherwise GitHub --generate-notes).
+    required: false
+    default: conventional
+  release-notes:
+    description: >
+      Path to repo-generated release notes markdown. Only used when mode=auto.
+      When provided and the file exists, it is used (prepended with a
+      traceability line). Otherwise GitHub auto-generated notes are used.
+    required: false
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate mode
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        case "${MODE}" in
+          conventional|scoped|auto) ;;
+          *)
+            echo "::error::Invalid mode '${MODE}'. Expected conventional, scoped, or auto."
+            exit 1
+            ;;
+        esac
+
+    # git-cliff needs full history and r* tags. Nested checkout keeps this
+    # action self-contained for conventional/scoped; auto still uses the API.
+    - name: Checkout history
+      if: ${{ inputs.mode == 'conventional' || inputs.mode == 'scoped' }}
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+        ref: ${{ github.sha }}
+
+    - name: Generate changelog
+      id: changelog
+      if: ${{ inputs.mode == 'conventional' || inputs.mode == 'scoped' }}
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        TAG: r${{ inputs.tag }}
+        GH_TOKEN: ${{ github.token }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "${{ github.action_path }}/generate-changelog.sh"
+
+    - name: Create tag and release
+      id: create-version
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: r${{ inputs.tag }}
+        MODE: ${{ inputs.mode }}
+        RELEASE_NOTES: ${{ inputs.release-notes }}
+        GENERATED_NOTES: ${{ steps.changelog.outputs.notes }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+          set -euo pipefail
+
+          # Release tag uses the "r" prefix (e.g. r26.07.09.<run_id>) so release
+          # tags are prefix-matchable (refs/tags/r*) and match the durable ECR
+          # image tag applied after the production deploy.
+          #
+          # Tag creation uses the GitHub API (not local git) so mode=auto still
+          # works when the caller does not check out the repository.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; skipping tag creation."
+          else
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${TAG}" \
+              -f sha="${GITHUB_SHA}"
+          fi
+
+          TRACE="Release build: commit ${GITHUB_SHA} (run [${GITHUB_RUN_ID}](${RUN_URL}))."
+
+          create_release_from_file() {
+            local src="$1"
+            {
+              echo "${TRACE}"
+              echo
+              cat "${src}"
+            } > release-notes.md
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${TAG}" \
+              --target "${GITHUB_SHA}" \
+              --notes-file release-notes.md
+          }
+
+          case "${MODE}" in
+            conventional|scoped)
+              if [[ -z "${GENERATED_NOTES}" || ! -f "${GENERATED_NOTES}" ]]; then
+                echo "::error::Changelog was not generated for mode=${MODE}."
+                exit 1
+              fi
+              if [[ -n "${RELEASE_NOTES}" ]]; then
+                echo "::notice::Ignoring release-notes (mode=${MODE}). Pass mode=auto to use a file."
+              fi
+              create_release_from_file "${GENERATED_NOTES}"
+              ;;
+            auto)
+              if [[ -n "${RELEASE_NOTES}" && -f "${RELEASE_NOTES}" ]]; then
+                create_release_from_file "${RELEASE_NOTES}"
+              else
+                if [[ -n "${RELEASE_NOTES}" ]]; then
+                  echo "::warning::release-notes path '${RELEASE_NOTES}' not found; falling back to GitHub auto-generated notes."
+                fi
+                gh release create "${TAG}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --title "${TAG}" \
+                  --target "${GITHUB_SHA}" \
+                  --notes "${TRACE}" \
+                  --generate-notes
+              fi
+              ;;
+            *)
+              echo "::error::Invalid mode '${MODE}'. Expected conventional, scoped, or auto."
+              exit 1
+              ;;
+          esac

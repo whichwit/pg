@@ -1,0 +1,35 @@
+name: Terraform Apply
+description: Apply Terraform from a specified working directory with JSON variable support
+
+inputs:
+  working-directory:
+    description: The working directory containing Terraform configuration
+    required: true
+    default: .
+  terraform-version:
+    description: 'Terraform version to install (default: latest)'
+    required: false
+    default: 'latest'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v4
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform init -upgrade
+
+    - name: Terraform Plan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform plan -out=tfplan
+
+    - name: Terraform Apply
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform apply -auto-approve tfplan

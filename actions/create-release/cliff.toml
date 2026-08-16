@@ -1,0 +1,45 @@
+# Conventional-commit changelog for create-release (mode=conventional).
+# Keep [git] in sync with cliff-scoped.toml. Types match check-conventional-commit.
+#
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = ""
+footer = ""
+trim = true
+render_always = true
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+## {{ group | striptags | trim }}
+{% for commit in commits -%}
+- {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message | split(pat="\n") | first | trim }}
+{% endfor %}
+{% endfor %}
+"""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+require_conventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = false
+fail_on_unmatched_commit = false
+topo_order = false
+sort_commits = "oldest"
+tag_pattern = "^r[0-9]"
+commit_parsers = [
+  { message = "^Merge ", skip = true },
+  { message = "^Merged ", skip = true },
+  { message = "^[a-z]+(\\([^)]+\\))?!:", group = "<!-- 0 -->Breaking Changes" },
+  { message = "^feat(\\([^)]+\\))?(!)?:", group = "<!-- 1 -->Features" },
+  { message = "^fix(\\([^)]+\\))?(!)?:", group = "<!-- 2 -->Fixes" },
+  { message = "^perf(\\([^)]+\\))?(!)?:", group = "<!-- 3 -->Performance" },
+  { message = "^refactor(\\([^)]+\\))?(!)?:", group = "<!-- 4 -->Refactors" },
+  { message = "^docs?(\\([^)]+\\))?(!)?:", group = "<!-- 5 -->Documentation" },
+  { message = "^test(\\([^)]+\\))?(!)?:", group = "<!-- 6 -->Tests" },
+  { message = "^build(\\([^)]+\\))?(!)?:", group = "<!-- 7 -->Build" },
+  { message = "^ci(\\([^)]+\\))?(!)?:", group = "<!-- 8 -->CI" },
+  { message = "^(chore|style|revert)(\\([^)]+\\))?(!)?:", group = "<!-- 9 -->Chores" },
+  { message = ".*", group = "<!-- 99 -->Uncategorized" },
+]

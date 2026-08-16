@@ -1,0 +1,166 @@
+name: 'Docker Build and Push'
+description: 'Build a project image and push it to an existing ECR repository (provision the repo in a preceding step). Always pushes ci-<sha>; when release-version is set, also pushes the durable release tag r<version>.'
+
+inputs:
+  project:
+    description: 'Infrastructure project name (ECR repo defaults to <project>/default)'
+    required: true
+  repository:
+    description: 'ECR repository name to push to, overriding the <project>/default convention'
+    required: false
+    default: ''
+  aws-access-key-id:
+    description: 'AWS access key ID'
+    required: true
+  aws-secret-access-key:
+    description: 'AWS secret access key'
+    required: true
+  aws-region:
+    description: 'AWS region'
+    required: true
+  aws-account-id:
+    description: 'AWS account ID hosting the ECR registry'
+    required: true
+  aws-role-to-assume:
+    description: 'Deployment role name to assume for ECR access'
+    required: true
+  release-version:
+    description: 'When set, also build/push the durable release tag "r<version>" in addition to ci-<sha>'
+    required: false
+    default: ''
+  platforms:
+    description: 'Target build platforms'
+    required: false
+    default: 'linux/arm64'
+  context:
+    description: 'Docker build context'
+    required: false
+    default: '.'
+  file:
+    description: 'Path to the Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  target:
+    description: 'Target build stage to build (optional)'
+    required: false
+    default: ''
+  build-args:
+    description: 'Newline-delimited list of build-time variables (KEY=value)'
+    required: false
+    default: ''
+  provenance:
+    description: 'Whether to generate provenance attestation. Defaults false so the push produces a single image manifest (required for AWS Lambda container images).'
+    required: false
+    default: 'false'
+  sbom:
+    description: 'Whether to generate an SBOM attestation. Defaults false; enabling it (like provenance) produces a multi-manifest image index that AWS Lambda cannot deploy.'
+    required: false
+    default: 'false'
+  cache-scope:
+    description: 'GHA build cache scope (used only when cache-from/cache-to are not overridden). Keep distinct from other builds in the same repo (e.g. the unit/integration "test" build) so their mode=max caches do not overwrite each other.'
+    required: false
+    default: 'image'
+  cache-from:
+    description: 'Override the cache source (e.g. type=registry,ref=ghcr.io/<owner>/<repo>/buildcache:image). Defaults to type=gha with cache-scope.'
+    required: false
+    default: ''
+  cache-to:
+    description: 'Override the cache export (e.g. type=registry,ref=...,mode=max). Defaults to type=gha,mode=max with cache-scope. Registry cache is not branch-isolated, so it shares across branches.'
+    required: false
+    default: ''
+
+outputs:
+  image-tag:
+    description: 'The CI image tag (ci-<sha>) that was built'
+    value: ${{ steps.build-image.outputs.image_tag }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Build image tag
+      id: build-image
+      shell: bash
+      run: echo "image_tag=ci-${GITHUB_SHA}" >> $GITHUB_OUTPUT
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-access-key-id: ${{ inputs.aws-access-key-id }}
+        aws-secret-access-key: ${{ inputs.aws-secret-access-key }}
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/${{ inputs.aws-role-to-assume }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Resolve ECR repository name
+      id: repo
+      shell: bash
+      run: echo "name=${{ inputs.repository != '' && inputs.repository || format('{0}/default', inputs.project) }}" >> $GITHUB_OUTPUT
+
+    - name: Cache image name w/o tag for later steps
+      id: set-image-name
+      shell: bash
+      run: echo "image=${{ steps.login-ecr.outputs.registry }}/${{ steps.repo.outputs.name }}" >> $GITHUB_OUTPUT
+
+    - name: Check if image tags already exist
+      id: check-tag
+      shell: bash
+      run: |
+        check_tag() {
+          if aws ecr describe-images \
+            --repository-name "${{ steps.repo.outputs.name }}" \
+            --image-ids imageTag="$1" >/dev/null 2>&1; then
+            echo "true"
+          else
+            echo "false"
+          fi
+        }
+        echo "ci_exists=$(check_tag "${{ steps.build-image.outputs.image_tag }}")" >> $GITHUB_OUTPUT
+        if [ -n "${{ inputs.release-version }}" ]; then
+          echo "version_exists=$(check_tag "r${{ inputs.release-version }}")" >> $GITHUB_OUTPUT
+        else
+          echo "version_exists=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Determine tags to push
+      id: push-tags
+      if: steps.check-tag.outputs.ci_exists == 'false' || steps.check-tag.outputs.version_exists == 'false'
+      shell: bash
+      run: |
+        TAGS=""
+        IMAGE="${{ steps.set-image-name.outputs.image }}"
+        if [ "${{ steps.check-tag.outputs.ci_exists }}" == "false" ]; then
+          TAGS="${IMAGE}:${{ steps.build-image.outputs.image_tag }}"
+        fi
+        if [ "${{ steps.check-tag.outputs.version_exists }}" == "false" ]; then
+          TAGS="${TAGS:+${TAGS}$'\n'}${IMAGE}:r${{ inputs.release-version }}"
+        fi
+        echo "tags<<EOF" >> $GITHUB_OUTPUT
+        echo "$TAGS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Build and push
+      if: steps.check-tag.outputs.ci_exists == 'false' || steps.check-tag.outputs.version_exists == 'false'
+      uses: docker/build-push-action@v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        target: ${{ inputs.target }}
+        build-args: ${{ inputs.build-args }}
+        provenance: ${{ inputs.provenance }}
+        sbom: ${{ inputs.sbom }}
+        labels: |
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          com.github.run-id=${{ github.run_id }}
+          com.github.run-url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        push: true
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ steps.push-tags.outputs.tags }}
+        cache-from: ${{ inputs.cache-from != '' && inputs.cache-from || format('type=gha,scope={0}', inputs.cache-scope) }}
+        cache-to: ${{ inputs.cache-to != '' && inputs.cache-to || format('type=gha,mode=max,scope={0}', inputs.cache-scope) }}

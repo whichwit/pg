@@ -1,0 +1,96 @@
+name: Tag Release
+description: Create and optionally push a git tag for the current release
+
+inputs:
+  scheme:
+    description: Versioning scheme to use (daily-counter, run-number, or run-id)
+    required: false
+    default: daily-counter
+  publish-summary:
+    description: Whether to publish the release summary to GITHUB_STEP_SUMMARY
+    required: false
+    default: "true"
+
+outputs:
+  version:
+    description: The version that was created
+    value: ${{ steps.create-version.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Release Version
+      id: create-version
+      shell: bash
+      env:
+        SCHEME: ${{ inputs.scheme }}
+        RUN_ID: ${{ github.run_id }}
+        RUN_NUMBER: ${{ github.run_number }}
+        GITHUB_TOKEN: ${{ github.token }}
+        TIMEZONE: America/Indianapolis
+      run: |
+          set -euo pipefail
+
+          format_counter() {
+            local value="$1"
+            printf '%03d\n' "$value"
+          }
+
+          # Use America/Indianapolis day boundaries for both version date and
+          # daily counter windows.
+          DATE=$(TZ="${TIMEZONE}" date +'%y.%m.%d')
+          LOCAL_DAY=$(TZ="${TIMEZONE}" date +'%Y-%m-%d')
+
+          if [ "${SCHEME}" = "run-id" ]; then
+            # CalVer + workflow run id: globally unique within repository.
+            VERSION="${DATE}.${RUN_ID}"
+          elif [ "${SCHEME}" = "run-number" ]; then
+            # CalVer + workflow run number: shorter, unique per workflow file.
+            COUNTER=$(format_counter "${RUN_NUMBER}")
+            VERSION="${DATE}.${COUNTER}"
+          elif [ "${SCHEME}" = "daily-counter" ]; then
+            # CalVer + per-day counter: shortest option, scoped to repository/day.
+            # Convert local day edges in TIMEZONE into UTC timestamps.
+            DAY_START_EPOCH=$(TZ="${TIMEZONE}" date -d "${LOCAL_DAY} 00:00:00" +'%s')
+            DAY_END_EPOCH=$(TZ="${TIMEZONE}" date -d "${LOCAL_DAY} 23:59:59" +'%s')
+            DAY_START_UTC=$(date -u -d "@${DAY_START_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')
+            DAY_END_UTC=$(date -u -d "@${DAY_END_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')
+            RUNS_COUNT=$(gh run list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --limit 1000 \
+              --json createdAt \
+              --jq ".[] | .createdAt" 2>/dev/null |
+              awk -v start="${DAY_START_UTC}" -v end="${DAY_END_UTC}" '\
+                $1 >= start && $1 <= end { c++ }
+                END { print c + 0 }
+              ' || true)
+
+            if [ -z "${RUNS_COUNT}" ] || ! [[ "${RUNS_COUNT}" =~ ^[0-9]+$ ]]; then
+              # Fallback keeps generation stable if CLI/API access is unavailable.
+              RUNS_COUNT="${RUN_NUMBER}"
+            elif [ "${RUNS_COUNT}" -eq 0 ]; then
+              # Current run should normally be included; guard against transient lag.
+              RUNS_COUNT=1
+            fi
+
+            COUNTER=$(format_counter "${RUNS_COUNT}")
+            VERSION="${DATE}.${COUNTER}"
+          else
+            echo "Unsupported scheme: ${SCHEME}. Expected one of: run-id, run-number, daily-counter" >&2
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated release version: ${VERSION} (scheme=${SCHEME}, commit ${GITHUB_SHA}, run ${GITHUB_RUN_ID})"
+
+    - name: Publish release summary
+      if: ${{ inputs.publish-summary == 'true' }}
+      shell: bash
+      run: |
+        {
+          echo "- Release version: \`${{ steps.create-version.outputs.version }}\`"
+          echo "- Triggered by: \`${{ github.actor }}\`"
+          echo "- Branch/ref: \`${{ github.ref_name }}\`"
+          echo "- Commit: \`${{ github.sha }}\`"
+          echo "- Run: [${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+        } >> "$GITHUB_STEP_SUMMARY"

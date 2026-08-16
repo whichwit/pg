@@ -1,0 +1,37 @@
+name: Cancel pending pipeline runs
+description: 'Cancels any pending runs for the current branch to avoid redundant pipelines'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cancel pending runs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        CURRENT_RUN_NUMBER=${{ github.run_number }}
+        WORKFLOW_NAME="${{ github.workflow }}"
+        BRANCH="$GITHUB_REF_NAME"
+
+        echo "Current run number: $CURRENT_RUN_NUMBER"
+        echo "Workflow: $WORKFLOW_NAME"
+        echo "Branch: $BRANCH"
+
+        PENDING_RUNS=$(gh run list \
+          --branch "$BRANCH" \
+          --workflow "$WORKFLOW_NAME" \
+          --status waiting \
+          --json databaseId,number \
+          --jq "[.[] | select(.number < $CURRENT_RUN_NUMBER) | .databaseId] | .[]")
+
+        if [ -z "$PENDING_RUNS" ]; then
+          echo "No pending runs with earlier run numbers found."
+          exit 0
+        fi
+
+        for RUN_ID in $PENDING_RUNS; do
+          echo "Canceling run $RUN_ID..."
+          gh run cancel "$RUN_ID" || echo "Failed to cancel run $RUN_ID (may have already completed)"
+        done
+
+        echo "Done canceling pending runs."

@@ -1,0 +1,65 @@
+name: Scaffold Default Branch
+description: 'Create the default branch from template'
+
+inputs:
+  repository:
+    description: 'Name for the new repository (name only)'
+    required: true
+  token:
+    description: 'GitHub Token with repo permissions'
+    required: true
+  branch:
+    description: 'Default branch name'
+    required: false
+    default: 'develop'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Prepare seed files
+      shell: bash
+      run: |
+        cp -r ./repository_seed /tmp/new-branch
+        ls -la /tmp/new-branch
+
+    - name: Initialize the repository
+      working-directory: /tmp/new-branch
+      shell: bash
+      run: |
+        git init
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Create and checkout new branch (main or develop)
+        git init
+        git add .
+        git commit -m "Initial commit"
+        git branch -M ${{ inputs.branch }}
+
+    - name: Set up remote origin with token
+      working-directory: /tmp/new-branch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO_NAME: ${{ inputs.repository }}
+      run: |
+        # Set up remote origin using the token
+        git remote add origin https://${GH_TOKEN}@github.com/Zotec-Product-Development/${REPO_NAME}.git
+
+        # Verify remote is set
+        git remote -v
+
+    - name: Push to new repository
+      working-directory: /tmp/new-branch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        # Push to origin
+        git push -u origin ${{ inputs.branch }}
+
+    - name: Summary
+      shell: bash
+      run: |
+        echo "✅ Repository ${{ inputs.repository }} has been seeded successfully!"
+        echo "🔗 https://github.com/Zotec-Product-Development/${{ inputs.repository }}"

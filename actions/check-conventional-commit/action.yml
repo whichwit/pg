@@ -1,0 +1,53 @@
+name: Check Conventional Commit
+description: Validate a string against conventional commit format with optional scope and AB# reference
+
+inputs:
+  title:
+    description: Title or message to validate (e.g. pull request title)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate conventional commit format
+      shell: bash
+      env:
+        PR_TITLE: ${{ inputs.title }}
+      run: |
+        set -euo pipefail
+
+        # Conventional commit format with optional scope and optional AB# reference.
+        # Examples:
+        #   feat: add retry logic
+        #   fix(api): handle timeout edge case
+        #   feat(prompt):AB#86798: improve SF case handling
+        #   chore!: drop legacy endpoint
+        #
+        # Rules:
+        #   - type is required (feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert)
+        #   - scope is optional, in parentheses
+        #   - optional ! for breaking changes
+        #   - optional AB#<digits>: after the colon+space or after scope
+        #   - short description: starts lowercase, 10-72 chars, parens allowed, no trailing period
+        type_re='(feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert)'
+        scope_re='(\([[:alnum:]_.-]+\))?'
+        breaking_re='!?'
+        ab_re='(AB#[0-9]+: ?)?'
+        desc_re='[a-z][a-zA-Z0-9 _,/:;()-]{8,70}[a-zA-Z0-9)]'
+
+        full_regex="^${type_re}${scope_re}${breaking_re}: ?${ab_re}${desc_re}$"
+
+        if [[ ! "$PR_TITLE" =~ $full_regex ]]; then
+          echo "::error::Invalid PR title: $PR_TITLE"
+          echo ""
+          echo "Expected format:"
+          echo "  type(scope): short description"
+          echo "  type(scope): AB#12345: short description"
+          echo ""
+          echo "Rules:"
+          echo "  - type: feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert"
+          echo "  - scope: optional, alphanumeric with _.-"
+          echo "  - AB# reference: optional, e.g. AB#86798:"
+          echo "  - description: starts lowercase, 10-72 chars, parens allowed, no trailing period"
+          exit 1
+        fi

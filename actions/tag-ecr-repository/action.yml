@@ -1,0 +1,102 @@
+name: 'Tag ECR Repository Image'
+description: 'Tags an image in Amazon ECR with specified tags'
+
+inputs:
+  repository: # potentiall allow multiple repositories to be specified
+    description: 'The ECR repository name'
+    required: true
+  source-tag:
+    description: 'The source image tag to tag'
+    required: true
+  tags:
+    description: 'Comma-separated list of tags to apply'
+    required: true
+  aws-role-to-assume:
+    description: 'IAM role to assume for tagging (e.g. the environment deployment role d-/s-/p-zeus-deployment)'
+    required: true
+  aws-account-id:
+    description: 'AWS account ID that owns the role in aws-role-to-assume (default: 559587901710)'
+    required: false
+    default: "559587901710"
+  ecr-account-id:
+    description: 'AWS account ID that owns the ECR repository/registry (default: 559587901710). May differ from aws-account-id for cross-account tagging.'
+    required: false
+    default: "559587901710"
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 'Validate inputs'
+      shell: bash
+      run: |
+        echo "Repository: ${{ inputs.repository }}"
+        echo "Source Tag: ${{ inputs.source-tag }}"
+        echo "Tags: ${{ inputs.tags }}"
+        echo "AWS Region: ${{ env.AWS_REGION }}"
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/${{ inputs.aws-role-to-assume }}
+        # The cross-account CI users (e.g. cicd_github_terraform_staging) are not
+        # granted sts:TagSession on the central d-zeus-deployment role, and session
+        # tags are not needed for ECR tagging. Skip tagging to avoid AssumeRole failing.
+        role-skip-session-tagging: true
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registries: ${{ inputs.ecr-account-id }}
+
+    - name: 'Tag ECR image'
+      shell: bash
+      run: |
+        # --registry-id targets the central ECR account explicitly, so tagging
+        # works even when the assumed role lives in a different (environment)
+        # account than the registry.
+        SOURCE_IMAGE=$(aws ecr batch-get-image \
+          --registry-id ${{ inputs.ecr-account-id }} \
+          --repository-name ${{ inputs.repository }} \
+          --image-ids imageTag=${{ inputs.source-tag }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'images[0]' \
+          --output json)
+
+        MANIFEST=$(echo "$SOURCE_IMAGE" | jq -r '.imageManifest')
+        SOURCE_DIGEST=$(echo "$SOURCE_IMAGE" | jq -r '.imageId.imageDigest')
+
+        IFS=',' read -ra TAG_ARRAY <<< "${{ inputs.tags }}"
+        for tag in "${TAG_ARRAY[@]}"; do
+          tag_trimmed=$(echo "$tag" | xargs)
+
+            # Check whether the tag already exists and, if so, what digest it points to.
+            # Use batch-get-image rather than describe-images because the cross-account
+            # repository policy grants BatchGetImage/PutImage but not DescribeImages.
+            # put-image raises ImageAlreadyExistsException when the tag is already
+            # attached to this exact manifest, so skip those to keep the step idempotent.
+            EXISTING_IMAGE=$(aws ecr batch-get-image \
+              --registry-id ${{ inputs.ecr-account-id }} \
+              --repository-name ${{ inputs.repository }} \
+              --image-ids imageTag="$tag_trimmed" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'images[0]' \
+              --output json 2>/dev/null || echo "null")
+            EXISTING_DIGEST=$(echo "$EXISTING_IMAGE" | jq -r '.imageId.imageDigest // "None"')
+
+          if [ "$EXISTING_DIGEST" == "$SOURCE_DIGEST" ]; then
+            echo "Tag '$tag_trimmed' already points to $SOURCE_DIGEST; skipping."
+            continue
+          fi
+
+          echo "Tagging image with: $tag_trimmed"
+          aws ecr put-image \
+            --registry-id ${{ inputs.ecr-account-id }} \
+            --repository-name ${{ inputs.repository }} \
+            --image-tag "$tag_trimmed" \
+            --image-manifest "$MANIFEST" \
+            --region ${{ env.AWS_REGION }}
+        done

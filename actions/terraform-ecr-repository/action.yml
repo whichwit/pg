@@ -1,0 +1,104 @@
+name: 'ecr-push'
+description: 'Check and create ECR repository in development AWS account if needed.'
+inputs:
+  project:
+    description: 'Infrastructure project name'
+    required: true
+  aws-role-to-assume:
+    description: 'IAM role to assume for deployment'
+    required: true
+  repositories:
+    description: 'Comma-separated list of ECR repository sub-names to create/check (each becomes <project>/<name>). Ignored when repository is set.'
+    required: false
+    default: 'default'
+  repository:
+    description: 'Full ECR repository name to create/check, overriding the <project>/<repositories> convention. If empty, the convention is used.'
+    required: false
+    default: ''
+  destroy:
+    description: 'Whether to destroy the ECR repository instead of creating/updating it (default: false)'
+    required: false
+    default: 'false'
+  force-delete:
+    description: 'Allow the repository to be deleted even if it still contains images (default: false)'
+    required: false
+    default: 'false'
+  apply:
+    description: 'Whether to apply the Terraform plan (default: false)'
+    required: false
+    default: 'false'
+  aws-account-id:
+    description: 'AWS account ID for ECR account (default: 559587901710)'
+    required: false
+    default: "559587901710"
+  terraform-version:
+    description: 'Terraform version to install (default: latest)'
+    required: false
+    default: 'latest'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v4
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+
+    - name: Initialize Terraform
+      run: |
+        terraform init \
+        -backend-config="key=${{ inputs.project }}/${{ inputs.project }}-ecr-terraform.tfstate" \
+        -input=false \
+        -upgrade
+      shell: bash
+      working-directory: ${{ github.action_path }}
+
+    - name: Create tfvars file
+      run: |
+        cat <<EOF > terraform.tfvars
+        aws_access_key = "${{ env.AWS_ACCESS_KEY_ID }}"
+        aws_secret_key = "${{ env.AWS_SECRET_ACCESS_KEY }}"
+        aws_region = "${{ env.AWS_REGION }}"
+        project = "${{ inputs.project }}"
+        ecr_repositories_string = "${{ inputs.repositories }}"
+        repository = "${{ inputs.repository }}"
+        force_delete = ${{ inputs.force-delete }}
+        aws_deployment_assume_role_arn = "arn:aws:iam::${{ inputs.aws-account-id }}:role/${{ inputs.aws-role-to-assume }}"
+        aws_tags_name = "/infrastructure/${{ inputs.project }}/tags"
+        EOF
+      shell: bash
+      working-directory: ${{ github.action_path }}
+
+    - name: Plan ECR repository creation
+      run: terraform plan -out=tfplan
+      shell: bash
+      working-directory: ${{ github.action_path }}
+
+    - name: Destroy ECR repository (if destroy input is true)
+      if: ${{ inputs.destroy == 'true' && inputs.apply != 'true' }}
+      run: terraform destroy -auto-approve
+      shell: bash
+      working-directory: ${{ github.action_path }}
+
+    - name: Apply ECR repository from plan
+      if: ${{ inputs.destroy != 'true' && inputs.apply == 'true' }}
+      run: terraform apply -auto-approve tfplan
+      shell: bash
+      working-directory: ${{ github.action_path }}
+
+    - name: Output ECR repository URL
+      id: ecr_output
+      if: ${{ inputs.destroy != 'true' && inputs.apply == 'true' }}
+      run: |
+        echo "ECR_REPOSITORY_URL=$(terraform output -json ecr_repository_url)" >> $GITHUB_OUTPUT
+        echo "ECR_REPOSITORY_NAME=$(terraform output -json ecr_repository_name)" >> $GITHUB_OUTPUT
+      shell: bash
+      working-directory: ${{ github.action_path }}
+
+outputs:
+  ecr-repository-url:
+    description: 'The URL of the ECR repository.'
+    value: ${{ steps.ecr_output.outputs.ECR_REPOSITORY_URL }}
+  ecr-repository-name:
+    description: 'The name of the ECR repository.'
+    value: ${{ steps.ecr_output.outputs.ECR_REPOSITORY_NAME }}
